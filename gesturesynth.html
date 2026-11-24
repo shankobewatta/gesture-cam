@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GestureSynth</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--teal:#2ff0c2;--coral:#ff7a63;--violet:#c58cff;--panel:rgba(16,18,22,.72);--text:#eaf0f3;--mute:#8f9aa5}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;background:#0c0e11;color:var(--text);font-family:Inter,system-ui,sans-serif;overflow:hidden}
+video,canvas{position:fixed;inset:0;width:100%;height:100%;object-fit:cover}
+video{transform:scaleX(-1);filter:brightness(.62)}
+header{position:fixed;top:16px;left:16px;right:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;z-index:5}
+.logo{font:800 24px Syne,sans-serif;letter-spacing:.01em;margin-right:6px}.logo b{color:var(--teal)}
+.pill{display:flex;gap:4px;padding:4px;border-radius:99px;background:var(--panel);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.08)}
+.pill button,.pill select{font:500 14px Inter,sans-serif;color:var(--text);background:none;border:0;border-radius:99px;padding:8px 16px;cursor:pointer}
+.pill button.on{background:rgba(47,240,194,.18);box-shadow:inset 0 0 0 1px var(--teal);color:var(--teal)}
+.pill select{background:#14171b}.pill option{background:#14171b}
+button:focus-visible,select:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+#numeral{position:fixed;left:64%;top:33%;transform:translateX(-50%);text-align:center;z-index:3;pointer-events:none}
+#numeral h1{font:800 clamp(64px,10vw,130px)/1 Syne,sans-serif;color:var(--teal);text-shadow:0 0 40px rgba(47,240,194,.45);min-height:1em}
+#numeral p{margin-top:6px;font:600 13px Inter,sans-serif;letter-spacing:.2em;text-transform:uppercase}
+#dock{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:4;text-align:center;width:min(94vw,860px)}
+#hint{font-size:12.5px;margin-bottom:10px;text-shadow:0 1px 6px #000}
+#pads{display:grid;grid-template-columns:repeat(8,1fr);gap:8px}
+.pad{padding:10px 4px 9px;border-radius:12px;background:rgba(30,32,36,.82);border:1px solid rgba(255,255,255,.08);color:var(--text);cursor:pointer;font-family:Inter,sans-serif;transition:background .12s,box-shadow .12s}
+.pad small{display:block;font-size:10px;color:var(--mute)}
+.pad b{display:block;font:800 18px Syne,sans-serif;margin:2px 0}
+.pad.on{background:rgba(47,240,194,.2);border-color:var(--teal);box-shadow:0 0 22px rgba(47,240,194,.35)}
+.pad.on b{color:var(--teal)}
+#chips{position:fixed;left:16px;bottom:18px;display:flex;gap:8px;z-index:5}
+.chip{display:flex;gap:7px;align-items:center;padding:7px 12px;border-radius:99px;background:var(--panel);font-size:12.5px;border:1px solid rgba(255,255,255,.08)}
+.chip i{width:8px;height:8px;border-radius:50%;background:#555}
+.chip.live i{background:var(--teal)}#cL.live i{background:var(--teal)}#cR.live i{background:var(--coral)}
+#start{position:fixed;inset:0;z-index:10;display:grid;place-items:center;background:radial-gradient(circle at 50% 40%,#16202a,#0a0c0f)}
+#start div{max-width:440px;padding:32px;text-align:center}
+#start h2{font:800 40px Syne,sans-serif}#start h2 b{color:var(--teal)}
+#start p{color:var(--mute);margin:14px 0 24px;line-height:1.55;font-size:15px}
+#go{font:600 16px Inter,sans-serif;background:var(--teal);color:#06231b;border:0;border-radius:99px;padding:14px 34px;cursor:pointer}
+#go:disabled{opacity:.6;cursor:wait}
+#msg{margin-top:16px;font-size:13px;color:var(--coral);min-height:1.2em}
+@media(max-width:640px){.pad small{display:none}#numeral{left:50%;top:26%}}
+</style>
+</head>
+<body>
+<video id="v" playsinline muted></video>
+<canvas id="c"></canvas>
+
+<header>
+  <span class="logo">GestureSynth<b>.me</b></span>
+  <nav class="pill" id="modes"><button class="on" data-m="gesture">Gesture</button><button data-m="theremin">Theremin</button></nav>
+  <div class="pill"><select id="key" aria-label="Key"></select><button id="swap" title="Use this if your left and right hands are mixed up">Swap hands</button></div>
+</header>
+
+<div id="numeral"><h1 id="num"></h1><p id="sub"></p></div>
+
+<div id="dock"><div id="hint"></div><div id="pads"></div></div>
+
+<div id="chips">
+  <div class="chip" id="cLive"><i></i>Live</div>
+  <div class="chip" id="cL"><i></i>Left</div>
+  <div class="chip" id="cR"><i></i>Right</div>
+</div>
+
+<div id="start"><div>
+  <h2>GestureSynth<b>.me</b></h2>
+  <p>Play chords with your hands. Your left hand picks the chord by how many fingers you show; tilt your wrist to switch major and minor. Your right hand shapes the sound. Allow camera access when asked, and use headphones to avoid feedback.</p>
+  <button id="go">Start playing</button>
+  <div id="msg"></div>
+</div></div>
+
+<script type="module">
+import {HandLandmarker, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+
+const WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+const NOTES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const SCALE = [0,2,4,5,7,9,11,12];
+const NUMERAL = ['I','II','III','IV','V','VI','VII','I'];
+const GESTURE = ['1 finger','2 fingers','3 fingers','4 fingers','5 fingers','Index + pinky','+ thumb','Thumb out'];
+const $ = id => document.getElementById(id);
+const video = $('v'), cv = $('c'), ctx = cv.getContext('2d');
+
+let key = 9, mode = 'gesture', swapHands = true, minor = false;
+let ac, analyser, master, filt, chordGain, lfoGain, voices = [], theremin, thGain;
+let landmarker, lastT = -1, cur = {d: -2, m: false}, manual = -1;
+let cand = -2, cnt = 0, gestDeg = -1, leftSeen = 0;
+const mtof = n => 440 * Math.pow(2, (n - 69) / 12);
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+/* ---------- UI ---------- */
+NOTES.forEach((n, i) => $('key').add(new Option('Key of ' + n, i, false, i === key)));
+$('key').onchange = e => { key = +e.target.value; cur.d = -2; renderPads(); };
+$('swap').onclick = () => { swapHands = !swapHands; $('swap').classList.toggle('on'); };
+$('modes').onclick = e => {
+  const m = e.target.dataset.m; if (!m) return;
+  mode = m;
+  [...$('modes').children].forEach(b => b.classList.toggle('on', b.dataset.m === m));
+  $('pads').style.display = m === 'gesture' ? '' : 'none';
+  $('hint').textContent = m === 'gesture'
+    ? 'Left hand selects a chord · wrist tilt changes major or minor · right hand: height = brightness, move right = vibrato'
+    : 'Right hand height = pitch · left hand height = volume (no left hand = medium volume)';
+  cur.d = -2; if (ac) { applyChord(-1, false); if (m === 'gesture') setTheremin(0, 440); }
+  $('num').textContent = ''; $('sub').textContent = '';
+};
+function renderPads() {
+  $('pads').innerHTML = '';
+  SCALE.forEach((s, i) => {
+    const b = document.createElement('button');
+    b.className = 'pad'; b.dataset.i = i;
+    b.innerHTML = `<small>${NOTES[(key + s) % 12]}</small><b>${NUMERAL[i]}</b><small>${GESTURE[i]}</small>`;
+    b.onpointerdown = () => { manual = i; };
+    b.onpointerup = b.onpointerleave = () => { if (manual === i) manual = -1; };
+    $('pads').appendChild(b);
+  });
+}
+renderPads();
+$('modes').querySelector('.on').click();
+
+function showChord(d, m) {
+  [...$('pads').children].forEach((p, i) => p.classList.toggle('on', i === d));
+  if (d < 0) { $('num').textContent = ''; $('sub').textContent = mode === 'gesture' ? 'Show your left hand' : ''; return; }
+  $('num').textContent = NUMERAL[d];
+  $('sub').textContent = `${NUMERAL[d]} · ${m ? 'minor' : 'major'} triad`;
+}
+
+/* ---------- Audio ---------- */
+function initAudio() {
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  master = ac.createGain(); master.gain.value = .5;
+  analyser = ac.createAnalyser(); analyser.fftSize = 1024;
+  filt = ac.createBiquadFilter(); filt.type = 'lowpass'; filt.Q.value = 2; filt.frequency.value = 1800;
+  chordGain = ac.createGain(); chordGain.gain.value = 0;
+  filt.connect(chordGain); chordGain.connect(master);
+  master.connect(analyser); analyser.connect(ac.destination);
+  const lfo = ac.createOscillator(); lfo.frequency.value = 5.5;
+  lfoGain = ac.createGain(); lfoGain.gain.value = 0; lfo.connect(lfoGain); lfo.start();
+  for (let i = 0; i < 3; i++) {
+    const g = ac.createGain(); g.gain.value = .2; g.connect(filt);
+    voices.push(['sawtooth', 'triangle'].map((t, j) => {
+      const o = ac.createOscillator(); o.type = t; o.detune.value = j ? 7 : -7;
+      lfoGain.connect(o.detune); o.connect(g); o.start(); return o;
+    }));
+  }
+  theremin = ac.createOscillator(); theremin.type = 'sine'; theremin.frequency.value = 440;
+  thGain = ac.createGain(); thGain.gain.value = 0;
+  lfoGain.connect(theremin.detune); theremin.connect(thGain); thGain.connect(master); theremin.start();
+}
+function applyChord(d, m) {
+  if (d === cur.d && m === cur.m) return;
+  const on = d >= 0, t = ac.currentTime;
+  if (on) {
+    const r = 48 + key + SCALE[d];
+    [r, r + (m ? 3 : 4), r + 7].forEach((n, i) => voices[i].forEach(o => o.frequency.setTargetAtTime(mtof(n), t, .025)));
+  }
+  chordGain.gain.setTargetAtTime(on ? .9 : 0, t, on ? .03 : .15);
+  cur = {d, m}; showChord(d, m);
+}
+function setTheremin(vol, f) {
+  const t = ac.currentTime;
+  thGain.gain.setTargetAtTime(vol, t, .05);
+  if (f) theremin.frequency.setTargetAtTime(f, t, .03);
+}
+
+/* ---------- Gesture reading ---------- */
+function classify(l) {
+  const w = l[0];
+  const up = [[8,6],[12,10],[16,14],[20,18]].map(([t, p]) => dist(l[t], w) > dist(l[p], w) * 1.1);
+  const thumb = dist(l[4], l[17]) > dist(l[2], l[17]) * 1.3;
+  const [i, m, r, p] = up, n = up.filter(Boolean).length;
+  if (i && p && !m && !r) return thumb ? 6 : 5;
+  if (!n) return thumb ? 7 : -1;
+  return n === 4 && thumb ? 4 : n - 1;
+}
+function tiltMinor(l) {
+  const a = Math.atan2(l[9].x - l[0].x, -(l[9].y - l[0].y));
+  minor = minor ? Math.abs(a) > .3 : Math.abs(a) > .5;
+  return minor;
+}
+
+/* ---------- Drawing ---------- */
+let W, H, dpr;
+function resize() {
+  dpr = window.devicePixelRatio || 1; W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+function drawHand(l, color) {
+  const vw = video.videoWidth, vh = video.videoHeight, s = Math.max(W / vw, H / vh);
+  const ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
+  const P = p => [(1 - p.x) * vw * s + ox, p.y * vh * s + oy];
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2.5;
+  ctx.shadowColor = color; ctx.shadowBlur = 10;
+  for (const c of HandLandmarker.HAND_CONNECTIONS) {
+    const [x1, y1] = P(l[c.start]), [x2, y2] = P(l[c.end]);
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+  for (const p of l) { const [x, y] = P(p); ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 7); ctx.fill(); }
+  ctx.shadowBlur = 0;
+}
+function drawWave() {
+  const buf = new Float32Array(analyser.fftSize); analyser.getFloatTimeDomainData(buf);
+  [[1, .75], [1.6, .3]].forEach(([k, a], j) => {
+    ctx.strokeStyle = `rgba(197,140,255,${a})`; ctx.lineWidth = j ? 1.5 : 2.5; ctx.beginPath();
+    for (let x = 0; x < W; x += 4) {
+      const v = buf[Math.floor(x / W * buf.length)] || 0;
+      const y = H * (.57 + j * .012) + v * 90 * k;
+      x ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+  });
+}
+
+/* ---------- Main loop ---------- */
+function loop() {
+  requestAnimationFrame(loop);
+  if (video.readyState < 2 || video.currentTime === lastT) return;
+  lastT = video.currentTime;
+  const res = landmarker.detectForVideo(video, performance.now());
+  ctx.clearRect(0, 0, W, H);
+  let L = null, R = null;
+  res.landmarks.forEach((l, i) => {
+    const label = res.handedness[i][0].categoryName;
+    const isLeft = swapHands ? label === 'Right' : label === 'Left';
+    if (isLeft) L = l; else R = l;
+  });
+  if (L) drawHand(L, '#2ff0c2');
+  if (R) drawHand(R, '#ff7a63');
+  $('cL').classList.toggle('live', !!L); $('cR').classList.toggle('live', !!R);
+  const now = performance.now();
+
+  if (mode === 'gesture') {
+    if (L) {
+      leftSeen = now;
+      const g = classify(L);
+      cnt = g === cand ? cnt + 1 : 1; cand = g;
+      if (cnt >= 3) gestDeg = g;
+      tiltMinor(L);
+    } else if (now - leftSeen > 400) { gestDeg = -1; cand = -2; }
+    applyChord(manual >= 0 ? manual : gestDeg, minor);
+    if (R) {
+      const y = 1 - clamp(R[9].y, 0, 1), x = 1 - clamp(R[9].x, 0, 1);
+      filt.frequency.setTargetAtTime(300 * Math.pow(2, 4.2 * y), ac.currentTime, .05);
+      lfoGain.gain.setTargetAtTime(x * 35, ac.currentTime, .1);
+    } else {
+      filt.frequency.setTargetAtTime(1800, ac.currentTime, .1);
+      lfoGain.gain.setTargetAtTime(0, ac.currentTime, .1);
+    }
+  } else {
+    if (R) {
+      const y = 1 - clamp((R[9].y - .1) / .8, 0, 1);
+      const f = 110 * Math.pow(2, 4 * y);
+      const vol = L ? Math.pow(1 - clamp((L[9].y - .1) / .8, 0, 1), 1.5) * .9 : .4;
+      setTheremin(vol, f);
+      lfoGain.gain.setTargetAtTime(8, ac.currentTime, .1);
+      const midi = 69 + 12 * Math.log2(f / 440);
+      $('num').textContent = NOTES[((Math.round(midi) % 12) + 12) % 12];
+      $('sub').textContent = Math.round(f) + ' Hz · theremin';
+    } else {
+      setTheremin(0);
+      $('num').textContent = ''; $('sub').textContent = 'Show your right hand';
+    }
+  }
+  drawWave();
+}
+
+/* ---------- Start ---------- */
+$('go').onclick = async () => {
+  const btn = $('go'), msg = $('msg');
+  btn.disabled = true; msg.style.color = '#8f9aa5'; msg.textContent = 'Loading hand tracking…';
+  try {
+    initAudio(); await ac.resume();
+    const fileset = await FilesetResolver.forVisionTasks(WASM);
+    const make = delegate => HandLandmarker.createFromOptions(fileset, {
+      baseOptions: {modelAssetPath: MODEL, delegate}, runningMode: 'VIDEO', numHands: 2
+    });
+    try { landmarker = await make('GPU'); } catch { landmarker = await make('CPU'); }
+    msg.textContent = 'Waiting for camera…';
+    video.srcObject = await navigator.mediaDevices.getUserMedia({video: {width: 1280, height: 720, facingMode: 'user'}, audio: false});
+    await video.play();
+    $('start').remove(); $('cLive').classList.add('live');
+    showChord(-1, false);
+    loop();
+  } catch (e) {
+    btn.disabled = false; msg.style.color = '#ff7a63';
+    msg.textContent = 'Could not start: ' + (e.message || e.name) + '. Check camera permission and your internet connection, then try again.';
+  }
+};
+</script>
+</body>
+</html>
