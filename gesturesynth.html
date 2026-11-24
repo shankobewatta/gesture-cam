@@ -42,6 +42,10 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--teal);outline-
 #msg{margin-top:16px;font-size:13px;color:var(--coral);min-height:1.2em}
 #objectStatus{position:fixed;top:86px;left:50%;transform:translateX(-50%);z-index:4;padding:10px 16px;border-radius:12px;background:rgba(12,14,17,.78);border:1px solid rgba(47,240,194,.35);backdrop-filter:blur(12px);font-size:13px;color:var(--text);max-width:min(90vw,560px);text-align:center;pointer-events:none}
 #objectStatus strong{color:var(--teal)}
+#voiceToggle{position:fixed;right:16px;bottom:18px;z-index:6;border:1px solid rgba(255,255,255,.16);border-radius:99px;background:var(--panel);color:var(--text);padding:9px 13px;cursor:pointer}
+#airCursor{position:fixed;width:28px;height:28px;border:2px solid var(--coral);border-radius:50%;z-index:8;pointer-events:none;display:none;transform:translate(-50%,-50%);box-shadow:0 0 18px rgba(255,122,99,.5)}
+#airCursor.pinched{background:rgba(255,122,99,.35);transform:translate(-50%,-50%) scale(.78)}
+
 @media(max-width:640px){.pad small{display:none}#numeral{left:50%;top:26%}}
 </style>
 </head>
@@ -51,12 +55,12 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--teal);outline-
 
 <header>
   <span class="logo">GestureSynth<b>.me</b></span>
-  <nav class="pill" id="modes"><button class="on" data-m="gesture">Gesture</button><button data-m="theremin">Theremin</button><button data-m="objects">Object AI</button></nav>
+  <nav class="pill" id="modes"><button class="on" data-m="gesture">Gesture</button><button data-m="theremin">Theremin</button><button data-m="objects">Object AI</button><button data-m="faces">Face AI</button><button data-m="airmouse">Air Mouse</button></nav>
   <div class="pill"><select id="key" aria-label="Key"></select><button id="swap" title="Use this if your left and right hands are mixed up">Swap hands</button></div>
 </header>
 
 <div id="numeral"><h1 id="num"></h1><p id="sub"></p></div>
-<div id="objectStatus" hidden>Object AI is ready.</div>
+<div id="objectStatus" hidden>Object AI is ready.</div><div id="airCursor"></div><button id="voiceToggle" type="button">🔊 Voice: On</button>
 
 <div id="dock"><div id="hint"></div><div id="pads"></div></div>
 
@@ -74,11 +78,12 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--teal);outline-
 </div></div>
 
 <script type="module">
-import {HandLandmarker, ObjectDetector, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+import {HandLandmarker, ObjectDetector, FaceDetector, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
 
 const WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 const OBJECT_MODEL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/1/efficientdet_lite0.tflite";
+const FACE_MODEL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
 const NOTES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const SCALE = [0,2,4,5,7,9,11,12];
 const NUMERAL = ['I','II','III','IV','V','VI','VII','I'];
@@ -88,7 +93,8 @@ const video = $('v'), cv = $('c'), ctx = cv.getContext('2d');
 
 let key = 9, mode = 'gesture', swapHands = true, minor = false;
 let ac, analyser, master, filt, chordGain, lfoGain, voices = [], theremin, thGain;
-let landmarker, objectDetector, visionFileset, objectLoading = false, lastT = -1, cur = {d: -2, m: false}, manual = -1;
+let landmarker, objectDetector, faceDetector, visionFileset, objectLoading = false, faceLoading = false, lastT = -1, cur = {d: -2, m: false}, manual = -1;
+let voiceOn = true, lastSpoken = "", lastSpokenAt = 0, trackedObjects = [], nextTrackId = 1, airX = innerWidth/2, airY = innerHeight/2, wasPinched = false, lastAirClick = 0;
 let cand = -2, cnt = 0, gestDeg = -1, leftSeen = 0;
 const mtof = n => 440 * Math.pow(2, (n - 69) / 12);
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
@@ -98,19 +104,25 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 NOTES.forEach((n, i) => $('key').add(new Option('Key of ' + n, i, false, i === key)));
 $('key').onchange = e => { key = +e.target.value; cur.d = -2; renderPads(); };
 $('swap').onclick = () => { swapHands = !swapHands; $('swap').classList.toggle('on'); };
+$('voiceToggle').onclick = () => { voiceOn = !voiceOn; $('voiceToggle').textContent = voiceOn ? '🔊 Voice: On' : '🔇 Voice: Off'; };
+function speak(text) { if (!voiceOn || !('speechSynthesis' in window)) return; const now=Date.now(); if(text===lastSpoken && now-lastSpokenAt<5000)return; lastSpoken=text;lastSpokenAt=now;speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.rate=1;speechSynthesis.speak(u); }
 $('modes').onclick = async e => {
   const m = e.target.dataset.m; if (!m) return;
   mode = m;
   [...$('modes').children].forEach(b => b.classList.toggle('on', b.dataset.m === m));
   $('pads').style.display = m === 'gesture' ? '' : 'none';
-  $('objectStatus').hidden = m !== 'objects';
+  $('objectStatus').hidden = !['objects','faces','airmouse'].includes(m);
+  $('voiceToggle').style.display = ['objects','faces'].includes(m) ? '' : 'none';
+  $('airCursor').style.display = m === 'airmouse' ? 'block' : 'none';
   $('chips').style.display = m === 'objects' ? 'none' : '';
   $('numeral').style.display = m === 'objects' ? 'none' : '';
   $('hint').textContent = m === 'gesture'
     ? 'Left hand selects a chord · wrist tilt changes major or minor · right hand: height = brightness, move right = vibrato'
     : m === 'theremin'
       ? 'Right hand height = pitch · left hand height = volume (no left hand = medium volume)'
-      : 'Point your camera at everyday objects. AI will draw a box and label each object it recognises.';
+      : m === 'objects' ? 'AI identifies and tracks supported objects as they move. Voice announcements can be muted.'
+    : m === 'faces' ? 'Face detection draws a live box around each face. Voice announcements are optional.'
+    : 'Move your index finger to control the on-screen pointer. Pinch thumb and index finger to click links and buttons.';
   cur.d = -2; if (ac) { applyChord(-1, false); setTheremin(0, 440); }
   $('num').textContent = ''; $('sub').textContent = '';
   if (m === 'objects') {
@@ -130,6 +142,17 @@ $('modes').onclick = async e => {
       } finally { objectLoading = false; }
     }
     $('objectStatus').innerHTML = '<strong>Object AI active</strong> · Point your camera at an object';
+  } else if (m === 'faces') {
+    $('objectStatus').textContent = 'Loading face detection model…';
+    if (!faceDetector && !faceLoading) {
+      faceLoading = true;
+      try { faceDetector = await FaceDetector.createFromOptions(visionFileset,{baseOptions:{modelAssetPath:FACE_MODEL,delegate:'GPU'},runningMode:'VIDEO',minDetectionConfidence:.5}); }
+      catch (err) { faceDetector = await FaceDetector.createFromOptions(visionFileset,{baseOptions:{modelAssetPath:FACE_MODEL,delegate:'CPU'},runningMode:'VIDEO',minDetectionConfidence:.5}); }
+      finally { faceLoading = false; }
+    }
+    $('objectStatus').innerHTML = '<strong>Face AI active</strong> · Looking for faces';
+  } else if (m === 'airmouse') {
+    $('objectStatus').innerHTML = '<strong>Air Mouse active</strong> · Index finger moves · pinch to click';
   }
 };
 function renderPads() {
@@ -247,12 +270,20 @@ function loop() {
   if (video.readyState < 2 || video.currentTime === lastT) return;
   lastT = video.currentTime;
   ctx.clearRect(0, 0, W, H);
+  if (mode === 'airmouse') {
+    const handResult=landmarker.detectForVideo(video,performance.now()), hand=handResult.landmarks?.[0];
+    if(hand){const tip=hand[8],thumb=hand[4],tx=clamp((1-tip.x)*W,0,W),ty=clamp(tip.y*H,0,H);airX+=(tx-airX)*.32;airY+=(ty-airY)*.32;$('airCursor').style.left=airX+'px';$('airCursor').style.top=airY+'px';const pinch=dist(tip,thumb)<.055;$('airCursor').classList.toggle('pinched',pinch);if(pinch&&!wasPinched&&performance.now()-lastAirClick>450){const el=document.elementFromPoint(airX,airY)?.closest('button,a,[role="button"]');if(el){el.click();lastAirClick=performance.now();}}wasPinched=pinch;}else{wasPinched=false;$('airCursor').classList.remove('pinched');}
+    $('objectStatus').innerHTML='<strong>Air Mouse active</strong> · '+(hand?'Hand tracked · pinch to click':'Show one hand to camera');return;
+  }
+  if (mode === 'faces') {
+    if(faceDetector){const result=faceDetector.detectForVideo(video,performance.now()),vw=video.videoWidth,vh=video.videoHeight,s=Math.max(W/vw,H/vh),ox=(W-vw*s)/2,oy=(H-vh*s)/2,faces=result.detections||[];faces.forEach((d,i)=>{const b=d.boundingBox,x=(1-(b.originX+b.width))*vw*s+ox,y=b.originY*vh*s+oy,w=b.width*vw*s,h=b.height*vh*s;ctx.strokeStyle='#ff7a63';ctx.lineWidth=3;ctx.shadowColor='#ff7a63';ctx.shadowBlur=14;ctx.strokeRect(x,y,w,h);ctx.shadowBlur=0;ctx.fillStyle='#ff7a63';ctx.font='600 14px Inter';ctx.fillText('Face '+(i+1),x,Math.max(18,y-8));});$('objectStatus').innerHTML='<strong>Face AI active</strong> · '+faces.length+' face'+(faces.length===1?'':'s')+' detected';if(faces.length)speak(faces.length===1?'I detected a face':'I detected '+faces.length+' faces');}return;
+  }
   if (mode === 'objects') {
     if (objectDetector) {
       const detected = objectDetector.detectForVideo(video, performance.now());
       const vw = video.videoWidth, vh = video.videoHeight, scale = Math.max(W / vw, H / vh);
       const ox = (W - vw * scale) / 2, oy = (H - vh * scale) / 2;
-      let count = 0;
+      let count = 0; const fresh=[];
       for (const item of detected.detections) {
         const b = item.boundingBox;
         const x = (1 - (b.originX + b.width)) * vw * scale + ox;
@@ -261,7 +292,9 @@ function loop() {
         const cat = item.categories?.[0];
         if (!cat) continue;
         count++;
-        const label = `${cat.categoryName} · ${Math.round(cat.score * 100)}%`;
+        const cx=x+w/2,cy=y+h/2,match=trackedObjects.find(t=>t.name===cat.categoryName&&Math.hypot(t.cx-cx,t.cy-cy)<Math.max(70,Math.min(w,h)*.8)),id=match?.id||nextTrackId++;
+        fresh.push({id,name:cat.categoryName,cx,cy});
+        const label = `${cat.categoryName} #${id} · ${Math.round(cat.score * 100)}%`;
         ctx.lineWidth = 2.5; ctx.strokeStyle = '#2ff0c2'; ctx.fillStyle = 'rgba(47,240,194,.12)';
         ctx.shadowColor = '#2ff0c2'; ctx.shadowBlur = 12;
         ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h); ctx.shadowBlur = 0;
@@ -270,7 +303,9 @@ function loop() {
         ctx.fillStyle = '#2ff0c2'; ctx.fillRect(x, ly, tw, th);
         ctx.fillStyle = '#06231b'; ctx.fillText(label, x + 9, ly + 19);
       }
-      $('objectStatus').innerHTML = `<strong>Object AI active</strong> · ${count} object${count === 1 ? '' : 's'} detected · Labels show confidence`;
+      trackedObjects=fresh;
+      $('objectStatus').innerHTML = `<strong>Object AI active</strong> · ${count} object${count === 1 ? '' : 's'} tracked · Voice ${voiceOn?'on':'off'}`;
+      const names=[...new Set(fresh.map(t=>t.name))]; if(names.length)speak('I detected '+names.slice(0,3).join(', '));
     }
     if (analyser) drawWave();
     return;
