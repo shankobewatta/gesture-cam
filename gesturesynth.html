@@ -94,7 +94,7 @@ const video = $('v'), cv = $('c'), ctx = cv.getContext('2d');
 let key = 9, mode = 'gesture', swapHands = true, minor = false;
 let ac, analyser, master, filt, chordGain, lfoGain, voices = [], theremin, thGain;
 let landmarker, objectDetector, faceLandmarker, visionFileset, objectLoading = false, faceLoading = false, lastT = -1, cur = {d: -2, m: false}, manual = -1;
-let voiceOn = true, lastSpoken = "", lastSpokenAt = 0, trackedObjects = [], nextTrackId = 1, airX = innerWidth/2, airY = innerHeight/2, wasPinched = false, lastAirClick = 0;\nlet drawing = false, drawMode = 'pen', drawColor = '#2ff0c2', lastDrawPoint = null, lastDrawAt = 0, lastClassifyAt = 0, mobileNet = null, mobileNetLoading = false;
+let voiceOn = true, lastSpoken = "", lastSpokenAt = 0, trackedObjects = [], nextTrackId = 1, airX = innerWidth/2, airY = innerHeight/2, wasPinched = false, lastAirClick = 0;\nlet drawing = false, drawMode = 'pen', drawColor = '#2ff0c2', lastDrawPoint = null, lastDrawAt = 0, lastClassifyAt = 0, mobileNet = null, mobileNetLoading = false, extraObjectLabel = '';
 let cand = -2, cnt = 0, gestDeg = -1, leftSeen = 0;
 const mtof = n => 440 * Math.pow(2, (n - 69) / 12);
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
@@ -126,7 +126,7 @@ $('modes').onclick = async e => {
       : m === 'vision' ? 'Face mesh and hand skeleton are tracked together in real time using connected landmarks.'
       : m === 'draw' ? 'Pinch thumb + index finger to draw in the air. Use the toolbar to erase, change colour or clear. Touch and mouse drawing also work.'
       : 'Move your index finger to control the on-screen pointer. Pinch thumb and index finger to click links and buttons.';
-  cur.d = -2; lastDrawPoint = null; drawing = false;
+  cur.d = -2; lastDrawPoint = null; drawing = false; if(m==='draw')ctx.clearRect(0,0,W,H);
   if (ac) { applyChord(-1, false); setTheremin(0, 440); }
   $('num').textContent = ''; $('sub').textContent = '';
   if (m === 'objects') {
@@ -308,7 +308,7 @@ function loop() {
   if (mode === 'draw') {
     const handResult=landmarker.detectForVideo(video,performance.now()),hand=handResult.landmarks?.[0];
     if(hand){const tip=videoPoint(hand[8]),pinch=dist(hand[8],hand[4])<.055,now=performance.now();
-      if(pinch){if(lastDrawPoint&&now-lastDrawAt<100)drawSegment(lastDrawPoint,tip,drawColor,5);lastDrawPoint=tip;lastDrawAt=now;}
+      if(pinch){if(lastDrawPoint&&now-lastDrawAt<100)drawSegment(lastDrawPoint,tip,drawMode==='eraser'?'#000':drawColor,drawMode==='eraser'?34:5);lastDrawPoint=tip;lastDrawAt=now;}
       else lastDrawPoint=null;
       $('objectStatus').innerHTML='<strong>Air Draw</strong> · '+(pinch?'Drawing':'Pinch thumb + index to draw');
     } else {lastDrawPoint=null;$('objectStatus').innerHTML='<strong>Air Draw</strong> · Show one hand';}
@@ -348,11 +348,11 @@ function loop() {
         ctx.fillStyle = '#06231b'; ctx.fillText(label, x + 9, ly + 19);
       }
       trackedObjects=fresh;
-      $('objectStatus').innerHTML = `<strong>Object AI active</strong> · ${count} object${count === 1 ? '' : 's'} tracked · Voice ${voiceOn?'on':'off'}`;
+      $('objectStatus').innerHTML = `<strong>Everyday AI</strong> · ${count} objects tracked${extraObjectLabel?' · '+extraObjectLabel:''} · Voice ${voiceOn?'on':'off'}`;
       const names=[...new Set(fresh.map(t=>t.name))]; if(names.length)speak('I detected '+names.slice(0,3).join(', '));
       if(mobileNet && performance.now()-lastClassifyAt>1400){lastClassifyAt=performance.now();mobileNet.classify(video,3).then(predictions=>{
         const useful=predictions.filter(p=>/pencil|ballpoint|pen|book|notebook|binder|envelope|ruler|scissors|stapler|calculator|water bottle|cellular telephone/i.test(p.className));
-        if(useful.length){const p=useful[0];$('objectStatus').innerHTML='<strong>Everyday AI</strong> · '+p.className+' ('+Math.round(p.probability*100)+'%) · '+count+' detected object(s)';}
+        if(useful.length){const p=useful[0];extraObjectLabel=p.className+' '+Math.round(p.probability*100)+'%';}else{extraObjectLabel='';}
       }).catch(err=>console.warn('Image classification frame failed',err));}
     }
     if (analyser) drawWave();
