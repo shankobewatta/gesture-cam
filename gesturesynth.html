@@ -83,7 +83,7 @@ body.drawing canvas{cursor:crosshair;touch-action:none}
 </div></div>
 
 <script type="module">
-import {HandLandmarker, ObjectDetector, FaceLandmarker, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+let HandLandmarker, ObjectDetector, FaceLandmarker, FilesetResolver;
 
 const WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
@@ -416,6 +416,9 @@ $('go').onclick = async () => {
   const btn = $('go'), msg = $('msg');
   btn.disabled = true; msg.style.color = '#8f9aa5'; msg.textContent = 'Loading hand tracking…';
   try {
+    msg.textContent = 'Connecting to AI vision engine…';
+    const visionModule = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm");
+    ({HandLandmarker, ObjectDetector, FaceLandmarker, FilesetResolver} = visionModule);
     initAudio(); await ac.resume();
     const fileset = await FilesetResolver.forVisionTasks(WASM);
     visionFileset = fileset;
