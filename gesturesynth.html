@@ -40,6 +40,8 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--teal);outline-
 #go{font:600 16px Inter,sans-serif;background:var(--teal);color:#06231b;border:0;border-radius:99px;padding:14px 34px;cursor:pointer}
 #go:disabled{opacity:.6;cursor:wait}
 #msg{margin-top:16px;font-size:13px;color:var(--coral);min-height:1.2em}
+#objectStatus{position:fixed;top:86px;left:50%;transform:translateX(-50%);z-index:4;padding:10px 16px;border-radius:12px;background:rgba(12,14,17,.78);border:1px solid rgba(47,240,194,.35);backdrop-filter:blur(12px);font-size:13px;color:var(--text);max-width:min(90vw,560px);text-align:center;pointer-events:none}
+#objectStatus strong{color:var(--teal)}
 @media(max-width:640px){.pad small{display:none}#numeral{left:50%;top:26%}}
 </style>
 </head>
@@ -49,11 +51,12 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--teal);outline-
 
 <header>
   <span class="logo">GestureSynth<b>.me</b></span>
-  <nav class="pill" id="modes"><button class="on" data-m="gesture">Gesture</button><button data-m="theremin">Theremin</button></nav>
+  <nav class="pill" id="modes"><button class="on" data-m="gesture">Gesture</button><button data-m="theremin">Theremin</button><button data-m="objects">Object AI</button></nav>
   <div class="pill"><select id="key" aria-label="Key"></select><button id="swap" title="Use this if your left and right hands are mixed up">Swap hands</button></div>
 </header>
 
 <div id="numeral"><h1 id="num"></h1><p id="sub"></p></div>
+<div id="objectStatus" hidden>Object AI is ready.</div>
 
 <div id="dock"><div id="hint"></div><div id="pads"></div></div>
 
@@ -71,10 +74,11 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--teal);outline-
 </div></div>
 
 <script type="module">
-import {HandLandmarker, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+import {HandLandmarker, ObjectDetector, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
 
 const WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+const OBJECT_MODEL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/1/efficientdet_lite0.tflite";
 const NOTES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const SCALE = [0,2,4,5,7,9,11,12];
 const NUMERAL = ['I','II','III','IV','V','VI','VII','I'];
@@ -84,7 +88,7 @@ const video = $('v'), cv = $('c'), ctx = cv.getContext('2d');
 
 let key = 9, mode = 'gesture', swapHands = true, minor = false;
 let ac, analyser, master, filt, chordGain, lfoGain, voices = [], theremin, thGain;
-let landmarker, lastT = -1, cur = {d: -2, m: false}, manual = -1;
+let landmarker, objectDetector, visionFileset, objectLoading = false, lastT = -1, cur = {d: -2, m: false}, manual = -1;
 let cand = -2, cnt = 0, gestDeg = -1, leftSeen = 0;
 const mtof = n => 440 * Math.pow(2, (n - 69) / 12);
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
@@ -94,16 +98,39 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 NOTES.forEach((n, i) => $('key').add(new Option('Key of ' + n, i, false, i === key)));
 $('key').onchange = e => { key = +e.target.value; cur.d = -2; renderPads(); };
 $('swap').onclick = () => { swapHands = !swapHands; $('swap').classList.toggle('on'); };
-$('modes').onclick = e => {
+$('modes').onclick = async e => {
   const m = e.target.dataset.m; if (!m) return;
   mode = m;
   [...$('modes').children].forEach(b => b.classList.toggle('on', b.dataset.m === m));
   $('pads').style.display = m === 'gesture' ? '' : 'none';
+  $('objectStatus').hidden = m !== 'objects';
+  $('chips').style.display = m === 'objects' ? 'none' : '';
+  $('numeral').style.display = m === 'objects' ? 'none' : '';
   $('hint').textContent = m === 'gesture'
     ? 'Left hand selects a chord · wrist tilt changes major or minor · right hand: height = brightness, move right = vibrato'
-    : 'Right hand height = pitch · left hand height = volume (no left hand = medium volume)';
-  cur.d = -2; if (ac) { applyChord(-1, false); if (m === 'gesture') setTheremin(0, 440); }
+    : m === 'theremin'
+      ? 'Right hand height = pitch · left hand height = volume (no left hand = medium volume)'
+      : 'Point your camera at everyday objects. AI will draw a box and label each object it recognises.';
+  cur.d = -2; if (ac) { applyChord(-1, false); setTheremin(0, 440); }
   $('num').textContent = ''; $('sub').textContent = '';
+  if (m === 'objects') {
+    $('objectStatus').textContent = 'Loading object recognition model…';
+    if (!objectDetector && !objectLoading) {
+      objectLoading = true;
+      try {
+        objectDetector = await ObjectDetector.createFromOptions(visionFileset, {
+          baseOptions: {modelAssetPath: OBJECT_MODEL, delegate: 'GPU'},
+          runningMode: 'VIDEO', scoreThreshold: 0.45, maxResults: 10
+        });
+      } catch (gpuError) {
+        objectDetector = await ObjectDetector.createFromOptions(visionFileset, {
+          baseOptions: {modelAssetPath: OBJECT_MODEL, delegate: 'CPU'},
+          runningMode: 'VIDEO', scoreThreshold: 0.45, maxResults: 10
+        });
+      } finally { objectLoading = false; }
+    }
+    $('objectStatus').innerHTML = '<strong>Object AI active</strong> · Point your camera at an object';
+  }
 };
 function renderPads() {
   $('pads').innerHTML = '';
@@ -219,8 +246,36 @@ function loop() {
   requestAnimationFrame(loop);
   if (video.readyState < 2 || video.currentTime === lastT) return;
   lastT = video.currentTime;
-  const res = landmarker.detectForVideo(video, performance.now());
   ctx.clearRect(0, 0, W, H);
+  if (mode === 'objects') {
+    if (objectDetector) {
+      const detected = objectDetector.detectForVideo(video, performance.now());
+      const vw = video.videoWidth, vh = video.videoHeight, scale = Math.max(W / vw, H / vh);
+      const ox = (W - vw * scale) / 2, oy = (H - vh * scale) / 2;
+      let count = 0;
+      for (const item of detected.detections) {
+        const b = item.boundingBox;
+        const x = (1 - (b.originX + b.width)) * vw * scale + ox;
+        const y = b.originY * vh * scale + oy;
+        const w = b.width * vw * scale, h = b.height * vh * scale;
+        const cat = item.categories?.[0];
+        if (!cat) continue;
+        count++;
+        const label = `${cat.categoryName} · ${Math.round(cat.score * 100)}%`;
+        ctx.lineWidth = 2.5; ctx.strokeStyle = '#2ff0c2'; ctx.fillStyle = 'rgba(47,240,194,.12)';
+        ctx.shadowColor = '#2ff0c2'; ctx.shadowBlur = 12;
+        ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h); ctx.shadowBlur = 0;
+        ctx.font = '600 14px Inter, sans-serif';
+        const tw = ctx.measureText(label).width + 18, th = 28, ly = Math.max(0, y - th);
+        ctx.fillStyle = '#2ff0c2'; ctx.fillRect(x, ly, tw, th);
+        ctx.fillStyle = '#06231b'; ctx.fillText(label, x + 9, ly + 19);
+      }
+      $('objectStatus').innerHTML = `<strong>Object AI active</strong> · ${count} object${count === 1 ? '' : 's'} detected · Labels show confidence`;
+    }
+    if (analyser) drawWave();
+    return;
+  }
+  const res = landmarker.detectForVideo(video, performance.now());
   let L = null, R = null;
   res.landmarks.forEach((l, i) => {
     const label = res.handedness[i][0].categoryName;
@@ -274,6 +329,7 @@ $('go').onclick = async () => {
   try {
     initAudio(); await ac.resume();
     const fileset = await FilesetResolver.forVisionTasks(WASM);
+    visionFileset = fileset;
     const make = delegate => HandLandmarker.createFromOptions(fileset, {
       baseOptions: {modelAssetPath: MODEL, delegate}, runningMode: 'VIDEO', numHands: 2
     });
