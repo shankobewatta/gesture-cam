@@ -44,7 +44,7 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--teal);outline-
 #objectStatus strong{color:var(--teal)}
 #voiceToggle{position:fixed;right:16px;bottom:18px;z-index:6;border:1px solid rgba(255,255,255,.16);border-radius:99px;background:var(--panel);color:var(--text);padding:9px 13px;cursor:pointer}
 #airCursor{position:fixed;width:28px;height:28px;border:2px solid var(--coral);border-radius:50%;z-index:8;pointer-events:none;display:none;transform:translate(-50%,-50%);box-shadow:0 0 18px rgba(255,122,99,.5)}
-#airCursor.pinched{background:rgba(255,122,99,.35);transform:translate(-50%,-50%) scale(.78)}
+#airCursor.pinched{background:rgba(255,122,99,.35);transform:translate(-50%,-50%) scale(.78)}\n#drawTools{position:fixed;right:16px;top:88px;z-index:7;display:flex;gap:6px;flex-wrap:wrap;max-width:210px;padding:9px;border-radius:14px;background:rgba(16,18,22,.82);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.12)}\n#drawTools[hidden]{display:none}#drawTools button{border:1px solid rgba(255,255,255,.14);background:#20252b;color:#eaf0f3;border-radius:9px;padding:8px 10px;cursor:pointer}#drawTools button.active{border-color:var(--teal);color:var(--teal)}\n#drawTools button[data-color]{font-size:20px;padding:3px 8px}#drawTools button[data-color="#2ff0c2"]{color:#2ff0c2}#drawTools button[data-color="#ff7a63"]{color:#ff7a63}#drawTools button[data-color="#c58cff"]{color:#c58cff}#drawTools button[data-color="#ffffff"]{color:#fff}\nbody.drawing canvas{cursor:crosshair;touch-action:none}
 
 @media(max-width:640px){.pad small{display:none}#numeral{left:50%;top:26%}}
 </style>
@@ -55,12 +55,12 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--teal);outline-
 
 <header>
   <span class="logo">GestureSynth<b>.me</b></span>
-  <nav class="pill" id="modes"><button class="on" data-m="gesture">Gesture</button><button data-m="theremin">Theremin</button><button data-m="objects">Object AI</button><button data-m="faces">Face AI</button><button data-m="airmouse">Air Mouse</button></nav>
+  <nav class="pill" id="modes"><button class="on" data-m="gesture">Gesture</button><button data-m="theremin">Theremin</button><button data-m="objects">Everyday AI</button><button data-m="vision">Face + Hands</button><button data-m="draw">Air Draw</button><button data-m="airmouse">Air Mouse</button></nav>
   <div class="pill"><select id="key" aria-label="Key"></select><button id="swap" title="Use this if your left and right hands are mixed up">Swap hands</button></div>
 </header>
 
 <div id="numeral"><h1 id="num"></h1><p id="sub"></p></div>
-<div id="objectStatus" hidden>Object AI is ready.</div><div id="airCursor"></div><button id="voiceToggle" type="button">🔊 Voice: On</button>
+<div id="objectStatus" hidden>AI is ready.</div><div id="airCursor"></div><button id="voiceToggle" type="button">🔊 Voice: On</button>\n<div id="drawTools" hidden><button data-tool="pen" class="active">✎ Pen</button><button data-tool="eraser">⌫ Eraser</button><button data-color="#2ff0c2" aria-label="Teal">●</button><button data-color="#ff7a63" aria-label="Coral">●</button><button data-color="#c58cff" aria-label="Violet">●</button><button data-color="#ffffff" aria-label="White">●</button><button id="clearDrawing">Clear</button></div>
 
 <div id="dock"><div id="hint"></div><div id="pads"></div></div>
 
@@ -78,12 +78,12 @@ button:focus-visible,select:focus-visible{outline:2px solid var(--teal);outline-
 </div></div>
 
 <script type="module">
-import {HandLandmarker, ObjectDetector, FaceDetector, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+import {HandLandmarker, ObjectDetector, FaceLandmarker, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
 
 const WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 const OBJECT_MODEL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/1/efficientdet_lite0.tflite";
-const FACE_MODEL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
+const FACE_MODEL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 const NOTES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const SCALE = [0,2,4,5,7,9,11,12];
 const NUMERAL = ['I','II','III','IV','V','VI','VII','I'];
@@ -93,8 +93,8 @@ const video = $('v'), cv = $('c'), ctx = cv.getContext('2d');
 
 let key = 9, mode = 'gesture', swapHands = true, minor = false;
 let ac, analyser, master, filt, chordGain, lfoGain, voices = [], theremin, thGain;
-let landmarker, objectDetector, faceDetector, visionFileset, objectLoading = false, faceLoading = false, lastT = -1, cur = {d: -2, m: false}, manual = -1;
-let voiceOn = true, lastSpoken = "", lastSpokenAt = 0, trackedObjects = [], nextTrackId = 1, airX = innerWidth/2, airY = innerHeight/2, wasPinched = false, lastAirClick = 0;
+let landmarker, objectDetector, faceLandmarker, visionFileset, objectLoading = false, faceLoading = false, lastT = -1, cur = {d: -2, m: false}, manual = -1;
+let voiceOn = true, lastSpoken = "", lastSpokenAt = 0, trackedObjects = [], nextTrackId = 1, airX = innerWidth/2, airY = innerHeight/2, wasPinched = false, lastAirClick = 0;\nlet drawing = false, drawMode = 'pen', drawColor = '#2ff0c2', lastDrawPoint = null, lastDrawAt = 0, lastClassifyAt = 0, mobileNet = null, mobileNetLoading = false;
 let cand = -2, cnt = 0, gestDeg = -1, leftSeen = 0;
 const mtof = n => 440 * Math.pow(2, (n - 69) / 12);
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
@@ -111,48 +111,55 @@ $('modes').onclick = async e => {
   mode = m;
   [...$('modes').children].forEach(b => b.classList.toggle('on', b.dataset.m === m));
   $('pads').style.display = m === 'gesture' ? '' : 'none';
-  $('objectStatus').hidden = !['objects','faces','airmouse'].includes(m);
-  $('voiceToggle').style.display = ['objects','faces'].includes(m) ? '' : 'none';
+  $('objectStatus').hidden = !['objects','vision','airmouse'].includes(m);
+  $('voiceToggle').style.display = ['objects','vision'].includes(m) ? '' : 'none';
   $('airCursor').style.display = m === 'airmouse' ? 'block' : 'none';
-  $('chips').style.display = m === 'objects' ? 'none' : '';
-  $('numeral').style.display = m === 'objects' ? 'none' : '';
+  $('drawTools').hidden = m !== 'draw';
+  document.body.classList.toggle('drawing', m === 'draw');
+  $('chips').style.display = ['objects','draw'].includes(m) ? 'none' : '';
+  $('numeral').style.display = ['objects','draw'].includes(m) ? 'none' : '';
   $('hint').textContent = m === 'gesture'
     ? 'Left hand selects a chord · wrist tilt changes major or minor · right hand: height = brightness, move right = vibrato'
     : m === 'theremin'
       ? 'Right hand height = pitch · left hand height = volume (no left hand = medium volume)'
-      : m === 'objects' ? 'AI identifies and tracks supported objects as they move. Voice announcements can be muted.'
-    : m === 'faces' ? 'Face detection draws a live box around each face. Voice announcements are optional.'
-    : 'Move your index finger to control the on-screen pointer. Pinch thumb and index finger to click links and buttons.';
-  cur.d = -2; if (ac) { applyChord(-1, false); setTheremin(0, 440); }
+      : m === 'objects' ? 'Point at everyday objects. AI combines object detection with image classification for a wider range of items.'
+      : m === 'vision' ? 'Face mesh and hand skeleton are tracked together in real time using connected landmarks.'
+      : m === 'draw' ? 'Pinch thumb + index finger to draw in the air. Use the toolbar to erase, change colour or clear. Touch and mouse drawing also work.'
+      : 'Move your index finger to control the on-screen pointer. Pinch thumb and index finger to click links and buttons.';
+  cur.d = -2; lastDrawPoint = null; drawing = false;
+  if (ac) { applyChord(-1, false); setTheremin(0, 440); }
   $('num').textContent = ''; $('sub').textContent = '';
   if (m === 'objects') {
-    $('objectStatus').textContent = 'Loading object recognition model…';
+    $('objectStatus').textContent = 'Loading object recognition…';
     if (!objectDetector && !objectLoading) {
       objectLoading = true;
-      try {
-        objectDetector = await ObjectDetector.createFromOptions(visionFileset, {
-          baseOptions: {modelAssetPath: OBJECT_MODEL, delegate: 'GPU'},
-          runningMode: 'VIDEO', scoreThreshold: 0.45, maxResults: 10
-        });
-      } catch (gpuError) {
-        objectDetector = await ObjectDetector.createFromOptions(visionFileset, {
-          baseOptions: {modelAssetPath: OBJECT_MODEL, delegate: 'CPU'},
-          runningMode: 'VIDEO', scoreThreshold: 0.45, maxResults: 10
-        });
-      } finally { objectLoading = false; }
+      try { objectDetector = await ObjectDetector.createFromOptions(visionFileset, {baseOptions:{modelAssetPath:OBJECT_MODEL,delegate:'GPU'},runningMode:'VIDEO',scoreThreshold:.35,maxResults:15}); }
+      catch (gpuError) { objectDetector = await ObjectDetector.createFromOptions(visionFileset, {baseOptions:{modelAssetPath:OBJECT_MODEL,delegate:'CPU'},runningMode:'VIDEO',scoreThreshold:.35,maxResults:15}); }
+      finally { objectLoading = false; }
     }
-    $('objectStatus').innerHTML = '<strong>Object AI active</strong> · Point your camera at an object';
-  } else if (m === 'faces') {
-    $('objectStatus').textContent = 'Loading face detection model…';
-    if (!faceDetector && !faceLoading) {
+    if (!mobileNet && !mobileNetLoading) {
+      mobileNetLoading = true;
+      try {
+        const tf = await import('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/+esm');
+        const mn = await import('https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/+esm');
+        await tf.ready(); mobileNet = await mn.load({version:2,alpha:1.0});
+      } catch (err) { console.warn('Extra image classifier unavailable', err); }
+      finally { mobileNetLoading = false; }
+    }
+    $('objectStatus').innerHTML = '<strong>Everyday AI active</strong> · Show an object to the camera';
+  } else if (m === 'vision') {
+    $('objectStatus').textContent = 'Loading face and hand landmark models…';
+    if (!faceLandmarker && !faceLoading) {
       faceLoading = true;
-      try { faceDetector = await FaceDetector.createFromOptions(visionFileset,{baseOptions:{modelAssetPath:FACE_MODEL,delegate:'GPU'},runningMode:'VIDEO',minDetectionConfidence:.5}); }
-      catch (err) { faceDetector = await FaceDetector.createFromOptions(visionFileset,{baseOptions:{modelAssetPath:FACE_MODEL,delegate:'CPU'},runningMode:'VIDEO',minDetectionConfidence:.5}); }
+      try { faceLandmarker = await FaceLandmarker.createFromOptions(visionFileset,{baseOptions:{modelAssetPath:FACE_MODEL,delegate:'GPU'},runningMode:'VIDEO',numFaces:3,outputFaceBlendshapes:false}); }
+      catch (err) { faceLandmarker = await FaceLandmarker.createFromOptions(visionFileset,{baseOptions:{modelAssetPath:FACE_MODEL,delegate:'CPU'},runningMode:'VIDEO',numFaces:3,outputFaceBlendshapes:false}); }
       finally { faceLoading = false; }
     }
-    $('objectStatus').innerHTML = '<strong>Face AI active</strong> · Looking for faces';
+    $('objectStatus').innerHTML = '<strong>Face + Hands active</strong> · Show your face and hands';
   } else if (m === 'airmouse') {
     $('objectStatus').innerHTML = '<strong>Air Mouse active</strong> · Index finger moves · pinch to click';
+  } else if (m === 'draw') {
+    $('objectStatus').innerHTML = '<strong>Air Draw active</strong> · Pinch to draw · release to stop';
   }
 };
 function renderPads() {
@@ -251,6 +258,25 @@ function drawHand(l, color) {
   for (const p of l) { const [x, y] = P(p); ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 7); ctx.fill(); }
   ctx.shadowBlur = 0;
 }
+function videoPoint(p) {
+  const vw=video.videoWidth,vh=video.videoHeight,scale=Math.max(W/vw,H/vh),ox=(W-vw*scale)/2,oy=(H-vh*scale)/2;
+  return {x:(1-p.x)*vw*scale+ox,y:p.y*vh*scale+oy};
+}
+function drawFaceMesh(points) {
+  ctx.save(); ctx.strokeStyle='rgba(197,140,255,.72)';ctx.fillStyle='#c58cff';ctx.lineWidth=1;
+  for(const edge of FaceLandmarker.FACE_LANDMARKS_TESSELATION){const a=points[edge.start],b=points[edge.end];if(!a||!b)continue;const A=videoPoint(a),B=videoPoint(b);ctx.beginPath();ctx.moveTo(A.x,A.y);ctx.lineTo(B.x,B.y);ctx.stroke();}
+  for(let i=0;i<points.length;i+=5){const p=videoPoint(points[i]);ctx.beginPath();ctx.arc(p.x,p.y,1.7,0,Math.PI*2);ctx.fill();}
+  ctx.restore();
+}
+function drawSegment(a,b,color,width=5) {
+  ctx.save();ctx.strokeStyle=color;ctx.lineWidth=width;ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.restore();
+}
+function pointerDrawStart(e){if(mode!=='draw'||e.target.closest('#drawTools'))return;drawing=true;lastDrawPoint={x:e.clientX,y:e.clientY};cv.setPointerCapture?.(e.pointerId);}
+function pointerDrawMove(e){if(mode!=='draw'||!drawing)return;const p={x:e.clientX,y:e.clientY};drawSegment(lastDrawPoint,p,drawMode==='eraser'?'rgba(12,14,17,1)':drawColor,drawMode==='eraser'?34:5);lastDrawPoint=p;}
+function pointerDrawEnd(){drawing=false;lastDrawPoint=null;}
+cv.addEventListener('pointerdown',pointerDrawStart);cv.addEventListener('pointermove',pointerDrawMove);cv.addEventListener('pointerup',pointerDrawEnd);cv.addEventListener('pointercancel',pointerDrawEnd);
+$('drawTools').addEventListener('click',e=>{const t=e.target.closest('button');if(!t)return;if(t.dataset.tool){drawMode=t.dataset.tool;[...$('drawTools').querySelectorAll('[data-tool]')].forEach(b=>b.classList.toggle('active',b===t));}if(t.dataset.color)drawColor=t.dataset.color;});
+$('clearDrawing').onclick=()=>ctx.clearRect(0,0,W,H);
 function drawWave() {
   const buf = new Float32Array(analyser.fftSize); analyser.getFloatTimeDomainData(buf);
   [[1, .75], [1.6, .3]].forEach(([k, a], j) => {
@@ -270,6 +296,24 @@ function loop() {
   if (video.readyState < 2 || video.currentTime === lastT) return;
   lastT = video.currentTime;
   ctx.clearRect(0, 0, W, H);
+  if (mode === 'vision') {
+    const handResult=landmarker.detectForVideo(video,performance.now());
+    const faceResult=faceLandmarker?faceLandmarker.detectForVideo(video,performance.now()):null;
+    (faceResult?.faceLandmarks||[]).forEach(drawFaceMesh);
+    (handResult.landmarks||[]).forEach((l,i)=>drawHand(l,i===0?'#2ff0c2':'#ff7a63'));
+    const fc=faceResult?.faceLandmarks?.length||0,hc=handResult.landmarks?.length||0;
+    $('objectStatus').innerHTML='<strong>Face + Hands</strong> · '+fc+' face'+(fc===1?'':'s')+' · '+hc+' hand'+(hc===1?'':'s')+' tracked';
+    return;
+  }
+  if (mode === 'draw') {
+    const handResult=landmarker.detectForVideo(video,performance.now()),hand=handResult.landmarks?.[0];
+    if(hand){const tip=videoPoint(hand[8]),pinch=dist(hand[8],hand[4])<.055,now=performance.now();
+      if(pinch){if(lastDrawPoint&&now-lastDrawAt<100)drawSegment(lastDrawPoint,tip,drawColor,5);lastDrawPoint=tip;lastDrawAt=now;}
+      else lastDrawPoint=null;
+      $('objectStatus').innerHTML='<strong>Air Draw</strong> · '+(pinch?'Drawing':'Pinch thumb + index to draw');
+    } else {lastDrawPoint=null;$('objectStatus').innerHTML='<strong>Air Draw</strong> · Show one hand';}
+    return;
+  }
   if (mode === 'airmouse') {
     const handResult=landmarker.detectForVideo(video,performance.now()), hand=handResult.landmarks?.[0];
     if(hand){const tip=hand[8],thumb=hand[4],tx=clamp((1-tip.x)*W,0,W),ty=clamp(tip.y*H,0,H);airX+=(tx-airX)*.32;airY+=(ty-airY)*.32;$('airCursor').style.left=airX+'px';$('airCursor').style.top=airY+'px';const pinch=dist(tip,thumb)<.055;$('airCursor').classList.toggle('pinched',pinch);if(pinch&&!wasPinched&&performance.now()-lastAirClick>450){const el=document.elementFromPoint(airX,airY)?.closest('button,a,[role="button"]');if(el){el.click();lastAirClick=performance.now();}}wasPinched=pinch;}else{wasPinched=false;$('airCursor').classList.remove('pinched');}
@@ -306,6 +350,10 @@ function loop() {
       trackedObjects=fresh;
       $('objectStatus').innerHTML = `<strong>Object AI active</strong> · ${count} object${count === 1 ? '' : 's'} tracked · Voice ${voiceOn?'on':'off'}`;
       const names=[...new Set(fresh.map(t=>t.name))]; if(names.length)speak('I detected '+names.slice(0,3).join(', '));
+      if(mobileNet && performance.now()-lastClassifyAt>1400){lastClassifyAt=performance.now();mobileNet.classify(video,3).then(predictions=>{
+        const useful=predictions.filter(p=>/pencil|ballpoint|pen|book|notebook|binder|envelope|ruler|scissors|stapler|calculator|water bottle|cellular telephone/i.test(p.className));
+        if(useful.length){const p=useful[0];$('objectStatus').innerHTML='<strong>Everyday AI</strong> · '+p.className+' ('+Math.round(p.probability*100)+'%) · '+count+' detected object(s)';}
+      }).catch(err=>console.warn('Image classification frame failed',err));}
     }
     if (analyser) drawWave();
     return;
